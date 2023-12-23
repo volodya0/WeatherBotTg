@@ -8,7 +8,10 @@ import * as path from "path";
 
 dotenv.config();
 
-const mqttClient = mqtt.connect(process.env.MQTT_BROKER_URL!);
+const mqttClient = mqtt.connect(process.env.MQTT_BROKER_URL!, {
+    username: process.env.MQTT_USERNAME,
+    password: process.env.MQTT_PASSWORD
+});
 
 mqttClient.on("error", (error) => console.log("Connection error:", error));
 mqttClient.on("reconnect", () => console.log("Client reconnecting..."));
