@@ -1,18 +1,18 @@
 import mqtt from "mqtt";
-import { fileURLToPath } from "url";
-import dotenv from "dotenv";
 import { Telegraf, Context } from "telegraf";
 import { WeatherRecord } from "./models";
 import { OpenAI } from "openai";
-import fs from "fs";
-import path from "path";
+import * as dotenv from "dotenv";
+import * as fs from "fs";
+import * as path from "path";
 
 dotenv.config();
-setTimeout(() => init(), 1000);
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const mqttClient = mqtt.connect(process.env.MQTT_BROKER_URL!);
 
+mqttClient.on("error", (error) => console.log("Connection error:", error));
+mqttClient.on("reconnect", () => console.log("Client reconnecting..."));
+mqttClient.on("offline", () => console.log("Client is offline"));
 mqttClient.on("connect", function () {
     console.log("Client connected to broker");
     mqttClient.subscribe("measurements", function (err) {
@@ -28,10 +28,35 @@ mqttClient.on("connect", function () {
 mqttClient.on("message", async function (topic, message) {
     // Assume the message is a JSON string with weather data
     try {
-        const weatherRecord = JSON.parse(message.toString());
+        const msg = message.toString();
+
+        console.log(
+            `Client received a message, topic="${topic}"  message="${msg}"`
+        );
+
+        let weatherRecord;
+        try {
+            weatherRecord = JSON.parse(msg) as WeatherRecord;
+            if (
+                !(weatherRecord instanceof Object) ||
+                !weatherRecord.humidity ||
+                !weatherRecord.pressure ||
+                !weatherRecord.temperature
+            ) {
+                throw new Error();
+            }
+        } catch {
+            console.log(`Failed to parse record, message="${msg}"`);
+            return;
+        }
+
         weatherHistory.addRecord(weatherRecord);
 
         const notification = await requestWeatherNotification();
+
+        console.log(
+            `Send notification to users, content="${notification}"  userIDs="${userIDs}"`
+        );
 
         // Send notification to all subscribed users
         userIDs.forEach((userId) => {
@@ -49,15 +74,22 @@ mqttClient.on("message", async function (topic, message) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
 // Array to store user IDs
 let userIDs: number[] = [];
 
 bot.start((ctx: Context) => {
-    ctx.reply("Welcome!");
+    ctx.reply("Привіт, тепер ти будеш отримуати опис змін показників!");
     // Add user ID to the array
     if (ctx.from?.id && !userIDs.includes(ctx.from.id)) {
+        console.log(
+            `New bot start, id="${ctx.from.id}" userName="${
+                ctx.from.username
+            }"  ctx="${JSON.stringify(ctx.from)}}"`
+        );
+
         userIDs.push(ctx.from.id);
         store();
     }
@@ -104,6 +136,8 @@ function createOpenAIPrompt() {
     return prompt;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 class WeatherHistory {
     private records: WeatherRecord[] = [];
 
@@ -138,10 +172,10 @@ class WeatherHistory {
 
 const weatherHistory = new WeatherHistory();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 function init() {
-    const filePath = path.join(__dirname, "data.json");
+    const filePath = path.join(process.cwd(), "data.json");
     if (fs.existsSync(filePath)) {
         const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
         if (Array.isArray(data.WeatherHistory)) {
@@ -152,8 +186,9 @@ function init() {
         }
     }
 }
+
 function store() {
-    const filePath = path.join(__dirname, "data.json");
+    const filePath = path.join(process.cwd(), "data.json");
     fs.writeFileSync(
         filePath,
         JSON.stringify(
@@ -167,3 +202,5 @@ function store() {
         "utf8"
     );
 }
+
+setTimeout(() => init(), 1000);
