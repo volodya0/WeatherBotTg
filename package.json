@@ -6,7 +6,8 @@
     "main": "app.js",
     "scripts": {
         "build": "tsc",
-        "start": "node dist/app.js"
+        "start": "node dist/app.js",
+        "build-start": "npm run build && npm run start"
     },
     "author": "",
     "license": "ISC",
