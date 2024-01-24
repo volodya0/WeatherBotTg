@@ -1,6 +1,6 @@
 import mqtt from "mqtt";
 import { Telegraf, Context, Markup } from "telegraf";
-import { WeatherRecord } from "./models";
+import { CommonInfo, DeviceInfo, WeatherRecord } from "./models";
 import { OpenAI } from "openai";
 import * as dotenv from "dotenv";
 import * as fs from "fs";
@@ -20,7 +20,7 @@ mqttClient.on("connect", function () {
     console.log("MQTT client connected to broker");
     mqttClient.subscribe("measurements/WeatherTgBot", function (err) {
         if (!err) {
-            mqttClient.publish("measurements/WeatherTgBot", "Hello from node");
+            mqttClient.publish("measurements/WeatherTgBot", "Connected MQTT client for bot");
         } else {
             console.log("ERROR CONNECTING CLIENT");
             console.log(err);
@@ -52,7 +52,7 @@ mqttClient.on("message", async function (topic, message) {
         ) {
             handleReceivedMeasurenents(msgString, msgParsed as  WeatherRecord)
         } else if (msgParsed.list_devices && Array.isArray(msgParsed.list_devices)){
-            handleReceivedDevices(msgParsed.list_devices as string[]);
+            handleReceivedDevices(msgParsed.list_devices as DeviceInfo[]);
         }else if (msgParsed.selected_device){
             handleReceivedInfo(msgParsed)
         }else {
@@ -68,7 +68,7 @@ mqttClient.on("message", async function (topic, message) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
 // Array to store user IDs
@@ -77,7 +77,7 @@ const usersRequestedDevideList: number[] = [];
 const usersRequestedInfo: number[] = [];
 
 bot.start((ctx: Context) => {
-    ctx.reply("Привіт, тепер ти будеш отримуати опис змін показників!");
+    ctx.reply("Привіт, тепер ти будеш отримуати опис змін показників вибраного пристрою!");
     // Add user ID to the array
     if (ctx.from?.id && !userIDs.includes(ctx.from.id)) {
         console.log(
@@ -91,7 +91,7 @@ bot.start((ctx: Context) => {
     }
 });
 
-bot.help((ctx: Context) => ctx.reply("Send me a sticker"));
+bot.help((ctx: Context) => ctx.reply("Вітаю! Даний бот призначений для отримання інформації про погоду та стан пристроїв. Ось список доступних команд:/n1. /start - Розпочніть взаємодію з ботом, щоб отримувати щоденні оновлення погоди та іншу інформацію./n2. /info - Використовуйте цю команду, щоб отримати інформацію про стан певного пристрою. Введіть `/info`, а потім виберіть пристрій зі списку, щоб отримати подробиці./n3. /list - Використовуйте команду `/list`, щоб переглянути список доступних пристроїв і їхніх параметрів. Виберіть пристрій, щоб отримати більше інформації./n4. /help - Використовуйте цю команду, щоб отримати додаткову інформацію про можливості бота та команди./nБот також автоматично повідомляє користувачів про оновлення погоди та інші важливі події. Не соромтеся використовувати команди та отримувати корисну інформацію від цього бота!"));
 
 bot.command("info", (ctx) => {
     usersRequestedInfo.push(ctx.from.id);
@@ -119,16 +119,19 @@ bot.action(/^choose_device_(.*)$/, (ctx) => {
         "data": "${selectedDevice}",
     }`);
 
-    // Answer the callback query (optional)
-    ctx.answerCbQuery(`You selected: ${selectedDevice}, wait for updates`);
+    bot.telegram.sendMessage(
+        ctx.from!.id,
+        `Вибрано пристрій: ${selectedDevice}, Очікуйте оновлень`
+    );
+    return;
 });
 
 bot.launch();
 
-function handleReceivedMeasurenents(msg: string, record: WeatherRecord){
+async function handleReceivedMeasurenents(msg: string, record: WeatherRecord){
     weatherHistory.addRecord(record);
 
-     const notification = msg;
+     const notification = process.env.USE_GPT === 'true' ? await requestWeatherNotification() : msg;
      console.log(
          `Send notification to telegram bot users, content="${notification}"  userIDs="${userIDs}"`
      );
@@ -136,14 +139,14 @@ function handleReceivedMeasurenents(msg: string, record: WeatherRecord){
      userIDs.forEach((userId) => {
          bot.telegram.sendMessage(
              userId,
-             notification ?? "Error during generating a notification content"
+             notification ?? "Виникла помилка при генерації контенту повідомлення, актуальні показникики: \n" + msg,
          );
      });
 
     store();
 };
 
-function handleReceivedDevices(list_devices: string[]) {
+function handleReceivedDevices(list_devices: DeviceInfo[]) {
     const userId = usersRequestedDevideList.shift();
     if(!userId){
         return;
@@ -156,31 +159,31 @@ function handleReceivedDevices(list_devices: string[]) {
     if (list_devices.length === 0) {
         bot.telegram.sendMessage(
             userId,
-            "Device liust is empty"
+            "Отримано пустий список пристроїв"
         );
         return;
     }
 
     const buttonLabels = list_devices.map((device) => {
-        return Markup.button.callback(device, `choose_device_${device}`);
+        return Markup.button.callback(`${device.status === 'Online' ? '✅' : '✖️'} ${device.name}` , `choose_device_${device.name}`);
     });
 
     const keyboard = Markup.inlineKeyboard(buttonLabels, { columns: 1 });
 
     bot.telegram.sendMessage(
         userId,
-        "Choose a device:",
+        "Виберіть пристрій:",
         keyboard
     );
 }
 
-function handleReceivedInfo(info: Record<string, string>) {
+function handleReceivedInfo(info: CommonInfo) {
     const userId = usersRequestedInfo.shift();
     if(!userId){
         return;
     }
 
-    const message = `Info:\n\tSelected Device: ${info.selected_device}\n\tAbsolute Pressure: ${info.absolut_pressure} hPa\n\tAltitude: ${info.altitude} meters\n\tRSSI: ${info.rssi}\n\tTimestep: ${info.timestep}\n\tStatus: ${info.status}`;
+    const message = `Інформація:\n\tВибраний пристрій: ${info.selected_device}\n\tАбсолютний тиск: ${info.absolut_pressure} Па\n\tВисота: ${info.altitude} метрів\n\tRSSI: ${info.rssi}\n\tЧасовий штамп: ${info.timestep}\n\tСтатус: ${info.status}`;
 
     console.log(
         `Send info list to telegram bot user, message="${message}"  userID="${userId}"`
@@ -199,15 +202,14 @@ async function requestWeatherNotification(): Promise<string | undefined> {
     const prompt = createOpenAIPrompt();
 
     try {
-        /*const completion = await openai.chat.completions.create({
+        const completion = await openai.chat.completions.create({
             max_tokens: 1000,
             messages: [{ role: "system", content: prompt }],
             model: "gpt-3.5-turbo",
             temperature: 0.6,
-        });*/
+        });
 
-        //const message = completion.choices[0].message.content;
-        const message = "";
+        const message = completion.choices[0].message.content;
         return message ?? undefined;
     } catch (error) {
         console.error("Error calling OpenAI API:", error);
@@ -222,10 +224,10 @@ function createOpenAIPrompt() {
 
     if (lastRecords.length === 1) {
         const record = lastRecords[0];
-        prompt += `The current weather data is: temperature ${record.temperature}°C, humidity ${record.humidity}%, and pressure ${record.pressure} hPa.`;
+        prompt += `The current weather data is: temperature ${record.temperature}°C, humidity ${record.humidity}%, and pressure ${record.pressure} Pa.`;
     } else if (lastRecords.length > 1) {
         const [previousRecord, currentRecord] = lastRecords;
-        prompt += `Previously, the weather was: temperature ${previousRecord.temperature}°C, humidity ${previousRecord.humidity}%, and pressure ${previousRecord.pressure} hPa. Now, the temperature is ${currentRecord.temperature}°C, the humidity is ${currentRecord.humidity}%, and the pressure is ${currentRecord.pressure} hPa. Describe the changes in weather conditions and provide a forecast for the upcoming changes.`;
+        prompt += `Previously, the weather was: temperature ${previousRecord.temperature}°C, humidity ${previousRecord.humidity}%, and pressure ${previousRecord.pressure} Pa. Now, the temperature is ${currentRecord.temperature}°C, the humidity is ${currentRecord.humidity}%, and the pressure is ${currentRecord.pressure} Pa. Describe the changes in weather conditions and provide a forecast for the upcoming changes.`;
     }
 
     return prompt;
@@ -280,6 +282,8 @@ function init() {
             userIDs.push(...data.Users);
         }
     }
+
+    setInterval(() => console.log('tick'), 10_000)
 }
 
 function store() {
