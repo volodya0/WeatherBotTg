@@ -91,7 +91,26 @@ bot.start((ctx: Context) => {
     }
 });
 
-bot.help((ctx: Context) => ctx.reply("Вітаю! Даний бот призначений для отримання інформації про погоду та стан пристроїв. Ось список доступних команд:/n1. /start - Розпочніть взаємодію з ботом, щоб отримувати щоденні оновлення погоди та іншу інформацію./n2. /info - Використовуйте цю команду, щоб отримати інформацію про стан певного пристрою. Введіть `/info`, а потім виберіть пристрій зі списку, щоб отримати подробиці./n3. /list - Використовуйте команду `/list`, щоб переглянути список доступних пристроїв і їхніх параметрів. Виберіть пристрій, щоб отримати більше інформації./n4. /help - Використовуйте цю команду, щоб отримати додаткову інформацію про можливості бота та команди./nБот також автоматично повідомляє користувачів про оновлення погоди та інші важливі події. Не соромтеся використовувати команди та отримувати корисну інформацію від цього бота!"));
+bot.telegram.setMyCommands([
+    {
+      command: 'info',
+      description: 'Виводить детальної інформації, такі як: статус і час.',
+    },
+    {
+      command: 'list',
+      description: 'Виводить список пристроїв з яких можна отримувати дані, а також їх статус. Зяких можна вибрати пристрій.',
+    },
+    {
+      command: 'start',
+      description: 'Запуск бота',
+    },
+    {
+      command: 'help',
+      description: 'Опис',
+    }
+  ]);
+
+bot.help((ctx: Context) => ctx.reply("Вітаю! Даний бот призначений для отримання інформації про погоду та стан пристроїв. Ось список доступних команд:\n1. /start - Розпочніть взаємодію з ботом, щоб отримувати щоденні оновлення погоди та іншу інформацію.\n2. /info - Використовуйте цю команду, щоб отримати інформацію про стан певного пристрою. Введіть `/info`, а потім виберіть пристрій зі списку, щоб отримати подробиці.\n3. /list - Використовуйте команду `/list`, щоб переглянути список доступних пристроїв і їхніх параметрів. Виберіть пристрій, щоб отримати більше інформації.\n4. /help - Використовуйте цю команду, щоб отримати додаткову інформацію про можливості бота та команди.\nБот також автоматично повідомляє користувачів про оновлення погоди та інші важливі події. Не соромтеся використовувати команди та отримувати корисну інформацію від цього бота!"));
 
 bot.command("info", (ctx) => {
     usersRequestedInfo.push(ctx.from.id);
@@ -116,14 +135,13 @@ bot.action(/^choose_device_(.*)$/, (ctx) => {
     mqttClient.publish("measurements/RequestSetting", `{
         "sendler": "TgBot",
         "requestCommand": "changeDevice",
-        "data": "${selectedDevice}",
+        "data": "${selectedDevice}"
     }`);
 
     bot.telegram.sendMessage(
         ctx.from!.id,
         `Вибрано пристрій: ${selectedDevice}, Очікуйте оновлень`
     );
-    return;
 });
 
 bot.launch();
@@ -135,7 +153,12 @@ async function handleReceivedMeasurenents(msg: string, record: WeatherRecord){
      console.log(
          `Send notification to telegram bot users, content="${notification}"  userIDs="${userIDs}"`
      );
-
+     console.log(notification)
+     mqttClient.publish("measurements/RequestSetting", `{
+        "sendler": "WebServ",
+        "requestCommand": "sendMessage",
+        "data": "${notification}"
+    }`);
      userIDs.forEach((userId) => {
          bot.telegram.sendMessage(
              userId,
@@ -224,10 +247,10 @@ function createOpenAIPrompt() {
 
     if (lastRecords.length === 1) {
         const record = lastRecords[0];
-        prompt += `The current weather data is: temperature ${record.temperature}°C, humidity ${record.humidity}%, and pressure ${record.pressure} Pa.`;
+        prompt += `The current weather data is: temperature ${record.temperature}°C, humidity ${record.humidity}%, and pressure ${record.pressure} Pa. Max size is 200 characters.`;
     } else if (lastRecords.length > 1) {
         const [previousRecord, currentRecord] = lastRecords;
-        prompt += `Previously, the weather was: temperature ${previousRecord.temperature}°C, humidity ${previousRecord.humidity}%, and pressure ${previousRecord.pressure} Pa. Now, the temperature is ${currentRecord.temperature}°C, the humidity is ${currentRecord.humidity}%, and the pressure is ${currentRecord.pressure} Pa. Describe the changes in weather conditions and provide a forecast for the upcoming changes.`;
+        prompt += `Previously, the weather was: temperature ${previousRecord.temperature}°C, humidity ${previousRecord.humidity}%, and pressure ${previousRecord.pressure} Pa. Now, the temperature is ${currentRecord.temperature}°C, the humidity is ${currentRecord.humidity}%, and the pressure is ${currentRecord.pressure} Pa. Describe the changes in weather conditions and provide a forecast for the upcoming changes. Max size is 200 characters.`;
     }
 
     return prompt;
